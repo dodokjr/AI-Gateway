@@ -1,0 +1,9 @@
+{
+  "functions": {
+    "api/index.go": { "maxDuration": 60 }
+  },
+  "rewrites": [
+    { "source": "/v1/:path*", "destination": "/api?__p=/v1/:path*" },
+    { "source": "/healthz", "destination": "/api?__p=/healthz" }
+  ]
+}

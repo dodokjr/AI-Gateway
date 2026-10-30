@@ -1,0 +1,7 @@
+.env
+config.json
+data/
+ai-gateway
+.vercel
+.netlify
+node_modules
