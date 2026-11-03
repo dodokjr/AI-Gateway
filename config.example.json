@@ -1,0 +1,61 @@
+{
+  "listen": "127.0.0.1:8080",
+  "kb_path": "data/knowledge.json",
+  "timeout_sec": 60,
+  "providers": [
+    {
+      "name": "gemini",
+      "type": "gemini",
+      "model": "gemini-2.5-flash",
+      "keys_env": "GEMINI_API_KEYS",
+      "priority": 1
+    },
+    {
+      "name": "groq",
+      "type": "openai_compat",
+      "base_url": "https://api.groq.com/openai/v1",
+      "model": "llama-3.3-70b-versatile",
+      "keys_env": "GROQ_API_KEYS",
+      "priority": 2
+    },
+    {
+      "name": "openrouter",
+      "type": "openai_compat",
+      "base_url": "https://openrouter.ai/api/v1",
+      "model": "meta-llama/llama-3.3-70b-instruct:free",
+      "keys_env": "OPENROUTER_API_KEYS",
+      "priority": 3
+    },
+    {
+      "name": "mistral",
+      "type": "openai_compat",
+      "base_url": "https://api.mistral.ai/v1",
+      "model": "mistral-small-latest",
+      "keys_env": "MISTRAL_API_KEYS",
+      "priority": 4
+    },
+    {
+      "name": "ollama",
+      "type": "openai_compat",
+      "base_url": "http://localhost:11434/v1",
+      "model": "llama3.2",
+      "no_key": true,
+      "priority": 5,
+      "disabled": true
+    },
+    {
+      "name": "claude",
+      "type": "anthropic",
+      "model": "claude-haiku-5-5",
+      "keys_env": "ANTHROPIC_API_KEYS",
+      "priority": 8
+    },
+    {
+      "name": "gpt",
+      "type": "openai",
+      "model": "gpt-4o-mini",
+      "keys_env": "OPENAI_API_KEYS",
+      "priority": 9
+    }
+  ]
+}
