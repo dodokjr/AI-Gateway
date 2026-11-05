@@ -59,7 +59,9 @@ func Build(cfg Config, total time.Duration) (*Server, error) {
 	if err != nil {
 		return nil, err
 	}
-	return NewServer(gw, NewKB(StoreFromEnv(cfg.KBPath)), os.Getenv("GATEWAY_KEY"), total), nil
+	kb := NewKB(StoreFromEnv(cfg.KBPath))
+	gw.AttachKnowledge(kb)
+	return NewServer(gw, kb, os.Getenv("GATEWAY_KEY"), total), nil
 }
 
 var (

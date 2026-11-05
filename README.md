@@ -1,5 +1,9 @@
 # AI Gateway (Golang) — Claude + GPT + Gemini + lainnya, teks saja
 
+[🇬🇧 English](README.en.md) · 🇮🇩 Bahasa Indonesia
+
+Panduan lengkap dari instal sampai jalan: [PANDUAN.md](PANDUAN.md)
+
 Satu API untuk banyak AI. Kalau token/kuota satu key atau provider habis (429/402),
 gateway otomatis pindah ke key/provider berikutnya. Bisa "dilatih" lewat basis
 pengetahuan. Hanya teks: gambar/video/audio ditolak (HTTP 400).
@@ -15,7 +19,7 @@ go run ./cmd/server
 ```
 
 Provider tanpa key otomatis dilewati. Urutan dicoba sesuai `priority` (kecil dulu).
-Bawaan: Gemini > Groq > OpenRouter > Mistral (gratis) > Claude > GPT (berbayar, cadangan).
+Bawaan: Custom AI > Gemini > Groq > OpenRouter > Mistral (gratis) > Claude > GPT (berbayar, cadangan).
 Untuk 100% gratis tanpa batas, jalankan Ollama lokal lalu set `"disabled": false` pada provider `ollama`.
 
 ## Cara failover
@@ -57,7 +61,7 @@ curl -X POST localhost:8080/v1/chat -H "Authorization: Bearer $GATEWAY_KEY" \
 ```
 
 Pada `/v1/chat/completions`, isi `model` dengan `auto`, nama provider (`gemini`),
-atau `provider/model` (`groq/llama-3.3-70b-versatile`).
+atau `provider/model` (`groq/openai/gpt-oss-20b`).
 
 ## Soal "melatih"
 
@@ -91,10 +95,51 @@ Batas waktu fungsi Netlify bawaan 10 dtk (bisa dinaikkan sampai 26 dtk di pengat
 - Upstash gratis memuat sekitar 900 KB data training.
 - Variabel lain: `CONFIG_JSON` (isi config.json penuh, menimpa bawaan).
 
+## Custom AI (mesin lokal, prioritas 1)
+
+Provider bertipe `custom` (`gateway/custom/`) dicoba lebih dulu. Ia **bukan model bahasa generatif**: jawabannya
+berasal dari memori terlatih, knowledge base (`/v1/train`), hasil pencarian web, dan rumus. Bila keyakinannya di bawah
+`threshold` (bawaan 0,8) ia "melewatkan" permintaan, gateway pindah ke AI lain (tanpa cooldown untuk Custom AI),
+membawa konteks pencarian web ke AI itu, lalu **jawaban AI itu dipelajari** Custom AI untuk pertanyaan berikutnya.
+
+| File | Isi |
+|---|---|
+| `custom_provider.go` | Engine, ambang keyakinan, dual-jawaban, `Declined` (pemicu failover) |
+| `math_engine.go` | TF-IDF, Cosine, Levenshtein, Softmax, EMA, RSI, GBM, Monte Carlo, Black-Scholes |
+| `market_data.go` | Data harga: Stooq (saham/indeks/forex/komoditas) dan CoinGecko (crypto) |
+| `web_search.go` | DuckDuckGo (tanpa kunci), Google Programmable Search, Brave Search |
+| `learning.go` | Memori belajar mandiri, TTL, filter data pribadi/waktu-nyata |
+| `ascii_art.go` | Permintaan gambar -> seni ASCII monokrom atau pola biner 0/1 |
+
+Contoh:
+
+```bash
+# prediksi pasar -> "text" (jawaban utama) + "secondary" (rincian rumus)
+curl -sX POST localhost:8080/v1/chat -H "Authorization: Bearer $GATEWAY_KEY" -d '{"prompt":"prediksi harga bitcoin 30 hari"}'
+# gambar -> ASCII / biner
+curl -sX POST localhost:8080/v1/chat -H "Authorization: Bearer $GATEWAY_KEY" -d '{"prompt":"buatkan gambar kucing dalam biner"}'
+# beri umpan balik pada jawaban dari memori (id ada di meta.memory_id); -1 dua kali = tidak dipakai lagi
+curl -sX POST localhost:8080/v1/feedback -H "Authorization: Bearer $GATEWAY_KEY" -d '{"id":"ID","rating":-1}'
+```
+
+Opsi di `config.json` -> provider `custom` -> `options`: `threshold`, `web_search`, `search_engines`
+(`duckduckgo`, `google`, `brave`), `max_results`, `simulations`, `learn_from_peers`, `peer_ttl_days`, `market`.
+
+Batasan penting:
+- **Kecocokan memori berbasis kata, sengaja ketat.** Ia tidak bisa membedakan "jam buka" dari "jam tutup" atau
+  "Warung Biru" dari "Warung Merah", jadi hanya pertanyaan yang (hampir) sama yang dijawab dari memori. Menurunkan
+  `threshold` menambah jawaban keliru.
+- **Memori dipakai bersama semua pengguna gateway.** Pertanyaan berisi email, nomor panjang, atau rahasia, serta data
+  waktu-nyata (hari ini, terbaru, harga), tidak dipelajari. Tetap hindari mengirim data pribadi.
+- **Privasi:** pertanyaan yang tidak ada di memori dikirim ke mesin pencari (DuckDuckGo secara bawaan). Setel `"web_search": false` untuk mematikan.
+- Pastikan syarat layanan penyedia AI yang Anda pakai mengizinkan menyimpan jawabannya; matikan dengan `"learn_from_peers": false`.
+- Scraping halaman Google/Bing tidak dilakukan (melanggar ketentuan, cepat diblokir). Bing Search API sudah dihentikan; gunakan Brave.
+- Prediksi pasar adalah proyeksi statistik dari data historis, bukan nasihat keuangan.
+- Pada serverless, memori belajar butuh Upstash agar bertahan (sama seperti knowledge base).
+
 ## Catatan
 
 - Kuota gratis & nama model berubah sewaktu-waktu; sesuaikan di `config.json`.
 - Isi `GATEWAY_KEY` sebelum membuka ke internet. Jangan commit `.env`.
 - `stream` belum didukung.
 - Tes: `go test ./...`
-# AI-Gateway

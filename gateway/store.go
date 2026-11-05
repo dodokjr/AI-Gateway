@@ -123,3 +123,16 @@ func StoreFromEnv(kbPath string) Store {
 	}
 	return FileStore{Path: kbPath}
 }
+
+// CustomStoreFromEnv memilih penyimpanan memori belajar Custom AI (kunci/berkas terpisah dari KB).
+func CustomStoreFromEnv() Store {
+	url := firstEnv("UPSTASH_REDIS_REST_URL", "KV_REST_API_URL")
+	tok := firstEnv("UPSTASH_REDIS_REST_TOKEN", "KV_REST_API_TOKEN")
+	if url != "" && tok != "" {
+		return UpstashStore{URL: url, Token: tok, Key: "ai-gateway:custom"}
+	}
+	if isServerless() {
+		return FileStore{Path: filepath.Join(os.TempDir(), "custom_memory.json"), Ephemeral: true}
+	}
+	return FileStore{Path: "data/custom_memory.json"}
+}

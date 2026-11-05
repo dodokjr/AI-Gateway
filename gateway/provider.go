@@ -34,6 +34,18 @@ type Provider interface {
 	Chat(ctx context.Context, key string, r ProviderRequest) (string, error)
 }
 
+// Reply adalah jawaban kaya dari provider yang bisa menyertakan referensi dan metadata.
+type Reply struct {
+	Text      string
+	Secondary string
+	Meta      map[string]any
+}
+
+// RichProvider (opsional) mengembalikan Reply lengkap; Gateway memakainya bila tersedia.
+type RichProvider interface {
+	ChatRich(ctx context.Context, key string, r ProviderRequest) (Reply, error)
+}
+
 var httpClient = &http.Client{}
 
 func truncate(s string, n int) string {
@@ -235,6 +247,8 @@ func (p Gemini) Chat(ctx context.Context, key string, r ProviderRequest) (string
 
 func newProvider(c ProviderCfg) (Provider, error) {
 	switch strings.ToLower(c.Type) {
+	case "custom":
+		return newCustomProvider(c)
 	case "openai":
 		base := c.BaseURL
 		if base == "" {
@@ -259,5 +273,5 @@ func newProvider(c ProviderCfg) (Provider, error) {
 		}
 		return Gemini{BaseURL: base}, nil
 	}
-	return nil, fmt.Errorf("provider %q: type %q tidak dikenal (openai | openai_compat | anthropic | gemini)", c.Name, c.Type)
+	return nil, fmt.Errorf("provider %q: type %q tidak dikenal (openai | openai_compat | anthropic | gemini | custom)", c.Name, c.Type)
 }

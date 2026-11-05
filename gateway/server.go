@@ -49,7 +49,7 @@ func (s *Server) auth(next http.Handler) http.Handler {
 		return next
 	}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/healthz" {
+		if r.URL.Path != "/healthz" && r.URL.Path != "/" {
 			tok := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
 			if tok == "" {
 				tok = r.Header.Get("X-API-Key")
@@ -65,6 +65,10 @@ func (s *Server) auth(next http.Handler) http.Handler {
 
 func (s *Server) routes() http.Handler {
 	mux := http.NewServeMux()
+	mux.HandleFunc("GET /{$}", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		_, _ = w.Write([]byte(indexHTML))
+	})
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, 200, map[string]string{"status": "ok"})
 	})
@@ -213,10 +217,17 @@ func (s *Server) chat(w http.ResponseWriter, r *http.Request, compat bool) {
 	for _, e := range used {
 		known = append(known, map[string]string{"id": e.ID, "question": e.Question})
 	}
-	writeJSON(w, 200, map[string]any{
+	out := map[string]any{
 		"text": res.Text, "provider": res.Provider, "model": res.Model,
 		"failed_attempts": res.Failed, "knowledge_used": known,
-	})
+	}
+	if res.Secondary != "" {
+		out["secondary"] = res.Secondary
+	}
+	if res.Meta != nil {
+		out["meta"] = res.Meta
+	}
+	writeJSON(w, 200, out)
 }
 
 type trainItem struct {
@@ -297,6 +308,9 @@ func (s *Server) feedback(w http.ResponseWriter, r *http.Request) {
 	}
 	if b.ID != "" {
 		ok, err := s.kb.Feedback(b.ID, b.Rating)
+		if err == nil && !ok {
+			ok, err = s.gw.CustomFeedback(b.ID, b.Rating) // id bisa milik memori Custom AI
+		}
 		if err != nil {
 			writeErr(w, 500, err.Error())
 			return
@@ -320,3 +334,9 @@ func (s *Server) feedback(w http.ResponseWriter, r *http.Request) {
 	}
 	writeErr(w, 400, "kirim id, atau question+answer dengan rating 1")
 }
+
+const indexHTML = `<!doctype html><html lang="id"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>AI Gateway</title>
+<style>body{font:16px/1.6 system-ui,sans-serif;max-width:40rem;margin:3rem auto;padding:0 1rem}code{background:#8882;padding:.1em .35em;border-radius:4px}</style></head>
+<body><h1>AI Gateway aktif</h1>
+<p>API chat teks gabungan Claude, GPT, Gemini dan lainnya dengan failover otomatis.</p>
+<p>Cek hidup: <code>GET /healthz</code><br>Chat: <code>POST /v1/chat</code> dengan header <code>Authorization: Bearer GATEWAY_KEY</code><br>Status: <code>GET /v1/status</code></p></body></html>`
