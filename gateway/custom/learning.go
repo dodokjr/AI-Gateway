@@ -47,6 +47,7 @@ type Learner struct {
 	loaded   bool
 	maxItems int
 	ttl      time.Duration
+	lastGood []byte // blob terakhir yang valid (untuk cadangan)
 }
 
 func NewLearner(store Store, maxItems int, ttl time.Duration) *Learner {
@@ -67,10 +68,16 @@ func (l *Learner) syncLocked() error {
 	var f memFile
 	if len(b) > 0 {
 		if err := json.Unmarshal(b, &f); err != nil {
+			if restored, herr := l.syncHealLocked(); herr == nil && restored {
+				return nil
+			}
 			return fmt.Errorf("memori custom rusak: %w", err)
 		}
 	}
 	l.items, l.loaded = f.Items, true
+	if len(b) > 0 {
+		l.lastGood = b
+	}
 	return nil
 }
 
@@ -79,7 +86,14 @@ func (l *Learner) saveLocked() error {
 	if err != nil {
 		return err
 	}
-	return l.store.Save(b)
+	if bs, ok := l.store.(BackupStore); ok && len(l.lastGood) > 0 {
+		_ = bs.SaveBackup(l.lastGood) // cadangan = versi valid sebelumnya
+	}
+	if err := l.store.Save(b); err != nil {
+		return err
+	}
+	l.lastGood = b
+	return nil
 }
 
 func newID() string {
@@ -104,7 +118,7 @@ func ShouldLearn(q, a string) bool {
 	if len([]rune(q)) < 3 || len([]rune(q)) > 500 || len([]rune(a)) < 20 || len([]rune(a)) > 4000 {
 		return false
 	}
-	if timeSensitive.MatchString(q) || IsMarketIntent(q) || IsImageRequest(q) {
+	if timeSensitive.MatchString(q) || IsMarketIntent(q) || IsImageRequest(q) || IsWeatherIntent(q) || IsCodeIntent(q) {
 		return false
 	}
 	for _, s := range []string{q, a} {

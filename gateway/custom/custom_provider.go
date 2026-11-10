@@ -7,6 +7,7 @@ package custom
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"math"
 	"strings"
@@ -24,12 +25,14 @@ type Config struct {
 	LearnFromPeers bool     `json:"learn_from_peers"` // pelajari jawaban AI lain
 	TTLDays        int      `json:"peer_ttl_days"`    // masa berlaku pengetahuan dari AI lain (0 = selamanya)
 	Market         bool     `json:"market"`           // aktifkan prediksi pasar
+	Weather        bool     `json:"weather"`          // aktifkan prakiraan cuaca (Open-Meteo)
+	DefaultCity    string   `json:"default_city"`     // kota bila pertanyaan cuaca tidak menyebut lokasi ("" = tidak ada)
 }
 
 func DefaultConfig() Config {
 	return Config{
 		Threshold: 0.8, WebSearch: true, Engines: []string{"duckduckgo"}, MaxResults: 5,
-		Simulations: 5000, LearnFromPeers: true, TTLDays: 30, Market: true,
+		Simulations: 5000, LearnFromPeers: true, TTLDays: 30, Market: true, Weather: true,
 	}
 }
 
@@ -63,9 +66,11 @@ type Engine struct {
 	Learner *Learner
 	Search  *Searcher
 	Market  *MarketClient
+	Weather *WeatherClient
 
-	mu sync.RWMutex
-	kb func(q string, n int) []Fact
+	mu      sync.RWMutex
+	kb      func(q string, n int) []Fact
+	breaker breaker
 }
 
 func NewEngine(cfg Config, store Store) *Engine {
@@ -74,6 +79,7 @@ func NewEngine(cfg Config, store Store) *Engine {
 		Learner: NewLearner(store, 2000, time.Duration(cfg.TTLDays)*24*time.Hour),
 		Search:  NewSearcher(cfg.Engines),
 		Market:  NewMarketClient(),
+		Weather: NewWeatherClient(),
 	}
 }
 
@@ -130,8 +136,13 @@ func (e *Engine) bestMemory(q string) (best memHit) {
 }
 
 // Respond menjawab, atau mengembalikan *Declined bila tidak yakin.
-func (e *Engine) Respond(ctx context.Context, msgs []Message) (*Reply, error) {
+func (e *Engine) respond(ctx context.Context, msgs []Message) (*Reply, error) {
 	q, single := lastUser(msgs)
+	if cq, ok := SanitizeInput(q); !ok {
+		return nil, &Declined{Reason: "pesan terlalu panjang untuk Custom AI", Threshold: e.Cfg.Threshold}
+	} else {
+		q = cq
+	}
 	if q == "" {
 		return nil, &Declined{Reason: "tidak ada pertanyaan", Threshold: e.Cfg.Threshold}
 	}
@@ -142,9 +153,27 @@ func (e *Engine) Respond(ctx context.Context, msgs []Message) (*Reply, error) {
 		return &Reply{Text: text, Meta: map[string]any{"source": "ascii_art", "confidence": 1.0, "subject": subj}}, nil
 	}
 
-	// 2. Prediksi pasar -> jawaban utama + referensi matematis.
+	// 2a. Cuaca -> prakiraan hari ini + N hari ke depan dari Open-Meteo.
 	var reason string
-	if e.Cfg.Market && IsMarketIntent(q) {
+	if e.Cfg.Weather && IsWeatherIntent(q) {
+		r, err := e.weather(ctx, q)
+		if err == nil {
+			return r, nil
+		}
+		reason = "prakiraan cuaca gagal: " + err.Error()
+	}
+
+	// 2a'. Logika pemrograman -> perapi kode, tabel kebenaran, pustaka algoritma.
+	if reason == "" && IsCodeIntent(q) {
+		r, err := e.code(q)
+		if err == nil {
+			return r, nil
+		}
+		reason = "logika pemrograman: " + err.Error()
+	}
+
+	// 2b. Prediksi pasar -> jawaban utama + referensi matematis.
+	if reason == "" && e.Cfg.Market && IsMarketIntent(q) {
 		r, err := e.forecast(ctx, q)
 		if err == nil {
 			return r, nil
@@ -172,7 +201,7 @@ func (e *Engine) Respond(ctx context.Context, msgs []Message) (*Reply, error) {
 		rs, err := e.Search.Search(sctx, q, e.Cfg.MaxResults)
 		cancel()
 		if err == nil && len(rs) > 0 {
-			hint = FormatHint(rs, 1500)
+			hint = SanitizeUntrusted(FormatHint(rs, 1500))
 			if ans, c := extractive(q, rs); c > conf {
 				conf = c
 				if c >= e.Cfg.Threshold {
@@ -227,7 +256,36 @@ func extractive(q string, rs []SearchResult) (string, float64) {
 			top = c
 		}
 	}
-	return fmt.Sprintf("%s\n\nSumber: %s", top.r.Snippet, top.r.URL), math.Min(0.6, top.cov*0.6)
+	return SanitizeUntrusted(fmt.Sprintf("%s\n\nSumber: %s", top.r.Snippet, top.r.URL)), math.Min(0.6, top.cov*0.6)
+}
+
+func (e *Engine) weather(ctx context.Context, q string) (*Reply, error) {
+	lang, q := DetectWeatherLang(q)
+	city, explicit := ExtractLocation(q)
+	if city == "" {
+		city, explicit = e.Cfg.DefaultCity, false
+	}
+	if city == "" {
+		return nil, errors.New("sebutkan kota, mis. \"cuaca di Bandung\"")
+	}
+	wctx, cancel := context.WithTimeout(ctx, 12*time.Second)
+	defer cancel()
+	place, err := e.Weather.GeocodeLang(wctx, city, lang)
+	if err != nil && !explicit && e.Cfg.DefaultCity != "" && city != e.Cfg.DefaultCity {
+		// tebakan lokasi gagal: pakai kota bawaan (kota yang disebut eksplisit tidak pernah diganti diam-diam)
+		place, err = e.Weather.GeocodeLang(wctx, e.Cfg.DefaultCity, lang)
+	}
+	if err != nil {
+		return nil, err
+	}
+	days := WeatherHorizon(q)
+	f, err := e.Weather.Forecast(wctx, place, days)
+	if err != nil {
+		return nil, fmt.Errorf("gagal mengambil prakiraan %s: %w", place.Name, err)
+	}
+	text, secondary := f.RenderLang(lang)
+	return &Reply{Text: text, Secondary: secondary,
+		Meta: map[string]any{"source": "open-meteo", "location": place.String(), "days": len(f.Days), "lang": lang}}, nil
 }
 
 func (e *Engine) forecast(ctx context.Context, q string) (*Reply, error) {

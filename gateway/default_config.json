@@ -18,7 +18,9 @@
         "simulations": 5000,
         "learn_from_peers": true,
         "peer_ttl_days": 30,
-        "market": true
+        "market": true,
+        "weather": true,
+        "default_city": "Jakarta"
       }
     },
     {

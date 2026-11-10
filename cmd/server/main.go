@@ -79,6 +79,24 @@ func main() {
 		log.Println("peringatan: GATEWAY_KEY kosong, endpoint tidak diamankan (jangan buka ke internet)")
 	}
 
+	// Pemeliharaan diri: sekali saat start, lalu tiap 6 jam (bersihkan memori, pulihkan dari cadangan, uji diri).
+	go func() {
+		t := time.NewTicker(6 * time.Hour)
+		defer t.Stop()
+		for {
+			for _, r := range srv.Heal() {
+				if r.Error != "" || !r.Report.Healthy {
+					log.Printf("self-heal %s: sehat=%v galat=%q", r.Name, r.Report.Healthy, r.Error)
+				}
+			}
+			select {
+			case <-t.C:
+			case <-context.Background().Done():
+				return
+			}
+		}
+	}()
+
 	hs := &http.Server{
 		Addr:              *listen,
 		Handler:           srv.Handler(),

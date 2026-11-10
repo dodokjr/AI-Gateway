@@ -99,3 +99,41 @@ func (g *Gateway) CustomFeedback(id string, delta int) (bool, error) {
 	}
 	return false, nil
 }
+
+// HealResult adalah ringkasan pemeriksaan + perbaikan satu Custom AI.
+type HealResult struct {
+	Name        string                 `json:"name"`
+	Maintenance *custom.MaintainReport `json:"maintenance,omitempty"`
+	Report      custom.SelfReport      `json:"report"`
+	Error       string                 `json:"error,omitempty"`
+}
+
+// SelfCheck menjalankan uji diri semua Custom AI (hanya baca).
+func (g *Gateway) SelfCheck() []HealResult {
+	var out []HealResult
+	for _, p := range g.provs {
+		if cp, ok := p.impl.(*customProv); ok {
+			out = append(out, HealResult{Name: p.cfg.Name, Report: cp.e.SelfCheck()})
+		}
+	}
+	return out
+}
+
+// Heal: bersihkan/pulihkan memori + uji diri semua Custom AI.
+func (g *Gateway) Heal() []HealResult {
+	var out []HealResult
+	for _, p := range g.provs {
+		if cp, ok := p.impl.(*customProv); ok {
+			m, rep, err := cp.e.Heal()
+			r := HealResult{Name: p.cfg.Name, Maintenance: &m, Report: rep}
+			if err != nil {
+				r.Error = custom.RedactSecrets(err.Error())
+			}
+			out = append(out, r)
+		}
+	}
+	return out
+}
+
+// Heal pada Server dipakai pemeliharaan berkala (cmd/server).
+func (s *Server) Heal() []HealResult { return s.gw.Heal() }

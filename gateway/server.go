@@ -16,10 +16,13 @@ type Server struct {
 	kb     *KB
 	apiKey string
 	total  time.Duration // batas total satu permintaan chat (0 = tanpa batas)
+
+	rl    *limiter
+	fails *failTracker
 }
 
 func NewServer(gw *Gateway, kb *KB, apiKey string, total time.Duration) *Server {
-	return &Server{gw: gw, kb: kb, apiKey: apiKey, total: total}
+	return &Server{gw: gw, kb: kb, apiKey: apiKey, total: total, rl: newLimiter(rateLimitPerMin()), fails: newFailTracker()}
 }
 
 // Handler mengembalikan http.Handler lengkap (routing + autentikasi).
@@ -50,13 +53,27 @@ func (s *Server) auth(next http.Handler) http.Handler {
 	}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/healthz" && r.URL.Path != "/" {
+			ip := clientIP(r)
+			if s.fails != nil {
+				if locked, wait := s.fails.locked(ip, time.Now()); locked {
+					w.Header().Set("Retry-After", fmt.Sprint(int(wait.Seconds())+1))
+					writeErr(w, http.StatusTooManyRequests, "terlalu banyak percobaan gagal, diblokir sementara")
+					return
+				}
+			}
 			tok := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
 			if tok == "" {
 				tok = r.Header.Get("X-API-Key")
 			}
 			if subtle.ConstantTimeCompare([]byte(tok), []byte(s.apiKey)) != 1 {
+				if s.fails != nil {
+					s.fails.fail(ip, time.Now())
+				}
 				writeErr(w, http.StatusUnauthorized, "API key gateway salah/tidak ada")
 				return
+			}
+			if s.fails != nil {
+				s.fails.ok(ip)
 			}
 		}
 		next.ServeHTTP(w, r)
@@ -76,6 +93,12 @@ func (s *Server) routes() http.Handler {
 	mux.HandleFunc("POST /v1/chat/completions", func(w http.ResponseWriter, r *http.Request) { s.chat(w, r, true) })
 	mux.HandleFunc("GET /v1/status", func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, 200, map[string]any{"providers": s.gw.Status(), "storage": s.kb.StorageKind()})
+	})
+	mux.HandleFunc("GET /v1/selfcheck", func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(w, 200, map[string]any{"custom": s.gw.SelfCheck()})
+	})
+	mux.HandleFunc("POST /v1/selfheal", func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(w, 200, map[string]any{"custom": s.gw.Heal()})
 	})
 	mux.HandleFunc("POST /v1/train", s.train)
 	mux.HandleFunc("GET /v1/train", s.listTrain)
@@ -101,7 +124,10 @@ func (s *Server) routes() http.Handler {
 		}
 		writeJSON(w, 200, map[string]string{"persona": s.kb.Persona()})
 	})
-	return s.auth(mux)
+	if s.rl == nil && s.fails == nil { // Server dibuat langsung (mis. di tes): pakai bawaan
+		s.rl, s.fails = newLimiter(rateLimitPerMin()), newFailTracker()
+	}
+	return secHeaders(s.limit(s.auth(mux)))
 }
 
 // splitMessages memisahkan system, memvalidasi role, dan mengambil pesan user terakhir.

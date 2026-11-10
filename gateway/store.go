@@ -45,6 +45,28 @@ func (f FileStore) Save(b []byte) error {
 	return os.Rename(tmp, f.Path)
 }
 
+func (f FileStore) writeAtomic(path string, b []byte) error {
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return err
+	}
+	tmp := path + ".tmp"
+	if err := os.WriteFile(tmp, b, 0o600); err != nil {
+		return err
+	}
+	return os.Rename(tmp, path)
+}
+
+// Cadangan & karantina untuk pemulihan otomatis (custom.BackupStore).
+func (f FileStore) SaveBackup(b []byte) error { return f.writeAtomic(f.Path+".bak", b) }
+func (f FileStore) LoadBackup() ([]byte, error) {
+	b, err := os.ReadFile(f.Path + ".bak")
+	if errors.Is(err, os.ErrNotExist) {
+		return nil, nil
+	}
+	return b, err
+}
+func (f FileStore) Quarantine(b []byte) error { return f.writeAtomic(f.Path+".corrupt", b) }
+
 func (f FileStore) Remote() bool { return false }
 func (f FileStore) Kind() string {
 	if f.Ephemeral {
@@ -91,6 +113,29 @@ func (u UpstashStore) Save(b []byte) error {
 		return fmt.Errorf("basis pengetahuan melebihi batas penyimpanan (%d KB)", maxRemoteBytes/1000)
 	}
 	_, err := u.cmd("SET", u.Key, string(b))
+	return err
+}
+
+// Cadangan & karantina (custom.BackupStore): kunci terpisah; karantina kedaluwarsa 7 hari.
+func (u UpstashStore) SaveBackup(b []byte) error {
+	if len(b) > maxRemoteBytes {
+		return nil
+	}
+	_, err := u.cmd("SET", u.Key+":bak", string(b))
+	return err
+}
+func (u UpstashStore) LoadBackup() ([]byte, error) {
+	r, err := u.cmd("GET", u.Key+":bak")
+	if err != nil || r == nil {
+		return nil, err
+	}
+	return []byte(*r), nil
+}
+func (u UpstashStore) Quarantine(b []byte) error {
+	if len(b) > maxRemoteBytes {
+		b = b[:maxRemoteBytes]
+	}
+	_, err := u.cmd("SET", u.Key+":corrupt", string(b), "EX", "604800")
 	return err
 }
 
