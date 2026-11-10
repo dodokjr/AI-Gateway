@@ -109,6 +109,11 @@ membawa konteks pencarian web ke AI itu, lalu **jawaban AI itu dipelajari** Cust
 | `market_data.go` | Data harga: Stooq (saham/indeks/forex/komoditas) dan CoinGecko (crypto) |
 | `web_search.go` | DuckDuckGo (tanpa kunci), Google Programmable Search, Brave Search |
 | `learning.go` | Memori belajar mandiri, TTL, filter data pribadi/waktu-nyata |
+| `weather.go` | Prakiraan cuaca seluruh dunia, hari ini + hingga 15 hari (Open-Meteo, gratis, tanpa kunci) |
+| `weather_i18n.go` | Terjemahan laporan cuaca: id, en, es, fr, de, pt, ja, zh, ko, ru (tabel bawaan, offline) |
+| `code_logic.go`, `code_snippets.go` | Logika pemrograman: perapi + pemeriksa sintaks Go/JSON, tabel kebenaran/tautologi/ekuivalensi, 8 algoritma terverifikasi (Go, Python, JavaScript) |
+| `guard.go` | Keamanan: penyaring rahasia, karakter tersembunyi, injeksi instruksi |
+| `selfheal.go` | Perbaikan-diri: uji diri, pemulihan memori dari cadangan, pembersihan, circuit breaker |
 | `ascii_art.go` | Permintaan gambar -> seni ASCII monokrom atau pola biner 0/1 |
 
 Contoh:
@@ -116,6 +121,10 @@ Contoh:
 ```bash
 # prediksi pasar -> "text" (jawaban utama) + "secondary" (rincian rumus)
 curl -sX POST localhost:8080/v1/chat -H "Authorization: Bearer $GATEWAY_KEY" -d '{"prompt":"prediksi harga bitcoin 30 hari"}'
+# cuaca hari ini + 7 hari ke depan (data Open-Meteo, tanpa kunci)
+curl -sX POST localhost:8080/v1/chat -H "Authorization: Bearer $GATEWAY_KEY" -d '{"prompt":"cuaca di Bandung hari ini dan 7 hari ke depan"}'
+# kota mana pun di dunia + bahasa lain (kota senama: "Paris, Texas")
+curl -sX POST localhost:8080/v1/chat -H "Authorization: Bearer $GATEWAY_KEY" -d '{"prompt":"cuaca di Tokyo 7 hari dalam bahasa Jepang"}'
 # gambar -> ASCII / biner
 curl -sX POST localhost:8080/v1/chat -H "Authorization: Bearer $GATEWAY_KEY" -d '{"prompt":"buatkan gambar kucing dalam biner"}'
 # beri umpan balik pada jawaban dari memori (id ada di meta.memory_id); -1 dua kali = tidak dipakai lagi
@@ -123,7 +132,7 @@ curl -sX POST localhost:8080/v1/feedback -H "Authorization: Bearer $GATEWAY_KEY"
 ```
 
 Opsi di `config.json` -> provider `custom` -> `options`: `threshold`, `web_search`, `search_engines`
-(`duckduckgo`, `google`, `brave`), `max_results`, `simulations`, `learn_from_peers`, `peer_ttl_days`, `market`.
+(`duckduckgo`, `google`, `brave`), `max_results`, `simulations`, `learn_from_peers`, `peer_ttl_days`, `market`, `weather`, `default_city`.
 
 Batasan penting:
 - **Kecocokan memori berbasis kata, sengaja ketat.** Ia tidak bisa membedakan "jam buka" dari "jam tutup" atau
@@ -134,8 +143,42 @@ Batasan penting:
 - **Privasi:** pertanyaan yang tidak ada di memori dikirim ke mesin pencari (DuckDuckGo secara bawaan). Setel `"web_search": false` untuk mematikan.
 - Pastikan syarat layanan penyedia AI yang Anda pakai mengizinkan menyimpan jawabannya; matikan dengan `"learn_from_peers": false`.
 - Scraping halaman Google/Bing tidak dilakukan (melanggar ketentuan, cepat diblokir). Bing Search API sudah dihentikan; gunakan Brave.
+- **Terjemahan cuaca** memakai tabel bawaan (gratis, tanpa layanan luar) untuk 10 bahasa: sebut "dalam bahasa Jepang" / "in French", atau tulis pertanyaan dengan kata cuaca bahasa itu (météo, clima, Wetter, 天気, 天气, 날씨, погода). Tanpa itu, bahasa mengikuti pertanyaan (Indonesia/Inggris). Bahasa lain belum didukung; pesan galat tetap berbahasa Indonesia.
+- **Cuaca** berasal dari Open-Meteo (Custom AI tidak menghitung cuaca sendiri); nama kota dikirim ke layanan itu. Akurasi menurun untuk hari yang jauh. Tanpa kota di pertanyaan dipakai `default_city` (bawaan Jakarta); kota yang disebut eksplisit dan tak ditemukan tidak diganti diam-diam. Matikan dengan `"weather": false`.
 - Prediksi pasar adalah proyeksi statistik dari data historis, bukan nasihat keuangan.
 - Pada serverless, memori belajar butuh Upstash agar bertahan (sama seperti knowledge base).
+
+## Logika pemrograman (Custom AI)
+
+```bash
+# algoritma terverifikasi (Go bawaan; sebut python / javascript)
+-d '{"prompt":"buatkan fungsi fibonacci dalam python"}'    # fibonacci, faktorial, prima, gcd, binary search, merge sort, palindrom, fizzbuzz
+# rapikan + periksa kode Go (gofmt, impor tak terpakai) atau JSON
+-d '{"prompt":"rapikan kode go ini:\n```go\nfunc main(){}\n```"}'
+# logika boolean: tabel kebenaran, tautologi, ekuivalensi (De Morgan)
+-d '{"prompt":"apakah !(A && B) ekuivalen dengan !A || !B"}'
+```
+
+Kode di pustaka dijalankan di Go, Python, dan JavaScript saat pengujian (`CODE_RUN=1 go test ./gateway/custom`) dan keluarannya identik.
+Kode pengguna **tidak pernah dijalankan** di server; hanya diformat dan diperiksa sintaksnya. Permintaan di luar kemampuan ini
+(mis. "buatkan fungsi login") diteruskan ke AI lain. Operator boolean: `! ~ ¬ not`, `&& & ∧ and`, `|| | ∨ or`, `^ ⊕ xor`, `-> → implies`, `<-> ↔ iff` (maks 6 variabel).
+
+## Keamanan
+
+- Autentikasi `GATEWAY_KEY` dengan perbandingan waktu-konstan; **10 kegagalan dalam 5 menit mengunci IP itu 5 menit**.
+- Pembatas laju per IP: `RATE_LIMIT_PER_MIN` (bawaan 60, `0` = mati). Di serverless batas ini per instance.
+- **Gagal-tertutup:** di Vercel/Netlify, bila `GATEWAY_KEY` kosong semua permintaan (kecuali `/healthz`) ditolak 503. Setel `ALLOW_NO_AUTH=1` hanya bila sengaja.
+- Header pengaman (nosniff, DENY frame, CSP, no-referrer, no-store), batas badan 1 MB, `TRUST_PROXY=1` bila di belakang proxy tepercaya (otomatis di serverless).
+- Teks dari web/AI lain dibersihkan: karakter tersembunyi/bidi dibuang, baris injeksi instruksi dibuang, kunci/token disamarkan. Pesan >20.000 karakter dilewatkan ke AI lain.
+- Bahasa pemrograman: seluruh sistem tetap Go (aman memori, pustaka kripto bawaan, satu biner, bisa jalan di Vercel/Netlify). Mencampur bahasa lain berarti proses terpisah dan tidak bisa di-deploy ke fungsi serverless Go.
+
+## Perbaikan-diri
+
+- `GET /v1/selfcheck`: uji jawaban-diketahui (matematika, logika, pustaka kode, terjemahan, penyaring keamanan, memori). `POST /v1/selfheal`: bersihkan memori + uji ulang.
+- Memori yang rusak dikarantina (`data/custom_memory.json.corrupt`) dan dipulihkan dari cadangan (`.bak`, atau kunci `:bak` di Upstash). Pembersihan: kedaluwarsa, dinilai buruk, duplikat, entri tak valid, dan entri AI lain yang kini tak lolos penyaring.
+- Circuit breaker: 3 galat internal/panic beruntun -> Custom AI dilewati 60 detik (AI lain mengambil alih), lalu dicoba lagi.
+- Server lokal menjalankan pemeliharaan saat start dan tiap 6 jam.
+- **Tidak ada pembaruan kode otomatis.** Custom AI tidak mengubah kodenya sendiri dan tidak mengunduh/menjalankan kode dari internet (celah rantai pasok dan eksekusi kode jarak jauh). Memperbarui kode = Anda deploy ulang. Yang "memperbarui diri" adalah pengetahuannya (belajar dari pengguna dan AI lain).
 
 ## Catatan
 

@@ -124,7 +124,7 @@ curl -sX POST localhost:8080/v1/feedback -H "Authorization: Bearer $GATEWAY_KEY"
 ```
 
 Options live in `config.json` -> provider `custom` -> `options`: `threshold`, `web_search`, `search_engines`
-(`duckduckgo`, `google`, `brave`), `max_results`, `simulations`, `learn_from_peers`, `peer_ttl_days`, `market`.
+(`duckduckgo`, `google`, `brave`), `max_results`, `simulations`, `learn_from_peers`, `peer_ttl_days`, `market`, `weather`, `default_city`.
 
 Important limits:
 - **Memory matching is word-based and deliberately strict.** It cannot tell "opening hours" from "closing hours"
@@ -135,8 +135,38 @@ Important limits:
 - **Privacy:** questions not found in memory are sent to a search engine (DuckDuckGo by default). Set `"web_search": false` to disable.
 - Make sure your AI providers' terms allow storing their answers; disable with `"learn_from_peers": false`.
 - Google/Bing results pages are not scraped (violates their terms and gets blocked quickly). The Bing Search API has been retired; use Brave instead.
+- **Weather translation** uses built-in tables (free, no outside service) for 10 languages: id, en, es, fr, de, pt, ja, zh, ko, ru. Say "in Japanese" / "dalam bahasa Jepang", or write the question with that language's word for weather (météo, clima, Wetter, 天気, 天气, 날씨, погода); otherwise the language follows the question (Indonesian/English). Other languages are not supported; error messages stay in Indonesian. Any city worldwide works; use "Paris, Texas" to pick between same-named cities.
+- **Weather** comes from Open-Meteo (the Custom AI does not compute weather itself); the city name is sent to that service. Accuracy drops for distant days. With no city in the question, `default_city` (default Jakarta) is used; an explicitly named city that is not found is never silently replaced. Disable with `"weather": false`. Example: `{"prompt":"weather in Bandung today and the next 7 days"}`.
 - Market forecasts are statistical projections from historical data, not financial advice.
 - On serverless, the learning memory needs Upstash to persist (same as the knowledge base).
+
+## Programming logic (Custom AI)
+
+```bash
+-d '{"prompt":"write a fibonacci function in python"}'      # fibonacci, factorial, prime, gcd, binary search, merge sort, palindrome, fizzbuzz
+-d '{"prompt":"format this go code:\n```go\nfunc main(){}\n```"}'  # gofmt + unused-import check, or JSON
+-d '{"prompt":"is !(A && B) equivalent to !A || !B"}'        # truth table / tautology / equivalence (max 6 variables)
+```
+
+Library code is executed in Go, Python and JavaScript during testing (`CODE_RUN=1 go test ./gateway/custom`) with identical output.
+User code is **never executed** on the server, only formatted and syntax-checked. Anything else (e.g. "write a login function") fails over to another AI.
+
+## Security
+
+- `GATEWAY_KEY` auth with constant-time comparison; **10 failures in 5 minutes lock that IP for 5 minutes**.
+- Per-IP rate limit: `RATE_LIMIT_PER_MIN` (default 60, `0` disables); per instance on serverless.
+- **Fail-closed:** on Vercel/Netlify an empty `GATEWAY_KEY` makes every request (except `/healthz`) return 503. Set `ALLOW_NO_AUTH=1` only on purpose.
+- Security headers, 1 MB body limit, `TRUST_PROXY=1` behind a trusted proxy (automatic on serverless).
+- Web/peer text is sanitized (hidden/bidi characters, injection lines removed, keys redacted); messages over 20,000 characters go to another AI.
+- Language choice: everything stays Go (memory-safe, stdlib crypto, single binary, deployable on Vercel/Netlify). Mixing in another language means a separate process that serverless Go functions cannot host.
+
+## Self-healing
+
+- `GET /v1/selfcheck` runs known-answer tests; `POST /v1/selfheal` cleans memory and re-tests.
+- Corrupt memory is quarantined and restored from backup (`.bak`, or the `:bak` key in Upstash). Cleanup removes expired, badly-rated, duplicate, invalid and now-unsafe peer entries.
+- Circuit breaker: 3 consecutive internal errors/panics skip the Custom AI for 60 s (other AIs take over), then retry.
+- The local server runs maintenance at start and every 6 hours.
+- **No automatic code self-update.** The Custom AI does not rewrite its own code or download/execute code from the internet (supply-chain and remote-code-execution risk). Updating code means you redeploy. What "updates itself" is its knowledge (learning from users and peer AIs).
 
 ## Notes
 

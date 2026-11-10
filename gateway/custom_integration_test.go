@@ -179,3 +179,36 @@ func TestCustomOverHTTP(t *testing.T) {
 }
 
 func jsonNum(f float64) string { b, _ := json.Marshal(f); return string(b) }
+
+func TestSelfCheckEndpoints(t *testing.T) {
+	t.Setenv("RATE_LIMIT_PER_MIN", "0")
+	peer := newMock(t, func(string) (int, string) { return 200, "jawaban peer yang cukup panjang untuk disimpan." })
+	gw, _ := newCustomGateway(t, peer.srv.URL, noWeb)
+	kb := NewKB(FileStore{Path: filepath.Join(t.TempDir(), "kb.json")})
+	api := httptest.NewServer(NewServer(gw, kb, "kunci", 0).Handler())
+	defer api.Close()
+	for _, c := range []struct{ method, path string }{{"GET", "/v1/selfcheck"}, {"POST", "/v1/selfheal"}} {
+		req, _ := http.NewRequest(c.method, api.URL+c.path, nil)
+		if resp, err := http.DefaultClient.Do(req); err != nil || resp.StatusCode != 401 {
+			t.Fatalf("%s tanpa kunci harus 401", c.path)
+		}
+		req.Header.Set("Authorization", "Bearer kunci")
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var out struct {
+			Custom []struct {
+				Name   string `json:"name"`
+				Report struct {
+					Healthy bool `json:"healthy"`
+				} `json:"report"`
+			} `json:"custom"`
+		}
+		_ = json.NewDecoder(resp.Body).Decode(&out)
+		resp.Body.Close()
+		if resp.StatusCode != 200 || len(out.Custom) != 1 || out.Custom[0].Name != "custom" || !out.Custom[0].Report.Healthy {
+			t.Fatalf("%s: %d %+v", c.path, resp.StatusCode, out)
+		}
+	}
+}

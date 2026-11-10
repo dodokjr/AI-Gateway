@@ -84,6 +84,10 @@ func Default() http.Handler {
 			})
 			return
 		}
+		if os.Getenv("GATEWAY_KEY") == "" && os.Getenv("ALLOW_NO_AUTH") != "1" {
+			defHandler = failClosed(srv.Handler()) // serverless = publik: jangan pernah terbuka tanpa kunci
+			return
+		}
 		defHandler = srv.Handler()
 	})
 	return defHandler
