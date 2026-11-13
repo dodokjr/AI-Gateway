@@ -212,3 +212,32 @@ func TestSelfCheckEndpoints(t *testing.T) {
 		}
 	}
 }
+
+func TestReviewEndpoint(t *testing.T) {
+	t.Setenv("RATE_LIMIT_PER_MIN", "0")
+	peer := newMock(t, func(string) (int, string) { return 200, "Ibu kota Prancis adalah Paris, kota besar di Eropa." })
+	gw, _ := newCustomGateway(t, peer.srv.URL, noWeb)
+	kb := NewKB(FileStore{Path: filepath.Join(t.TempDir(), "kb.json")})
+	api := httptest.NewServer(NewServer(gw, kb, "kunci", 0).Handler())
+	defer api.Close()
+	if _, err := gw.Chat(context.Background(), ChatOptions{}, "", userMsg("Apa ibu kota Prancis?")); err != nil {
+		t.Fatal(err)
+	}
+	req, _ := http.NewRequest("GET", api.URL+"/v1/learn/review?limit=5", nil)
+	req.Header.Set("Authorization", "Bearer kunci")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	var out struct {
+		Review []struct {
+			Provider, Question, Trust string
+		} `json:"review"`
+		Stats map[string]map[string]int `json:"stats"`
+	}
+	_ = json.NewDecoder(resp.Body).Decode(&out)
+	if resp.StatusCode != 200 || len(out.Review) != 1 || out.Review[0].Provider != "custom" || out.Review[0].Trust != "belum-diverifikasi" || out.Stats["custom"]["belum-diverifikasi"] != 1 {
+		t.Fatalf("review: %d %+v", resp.StatusCode, out)
+	}
+}

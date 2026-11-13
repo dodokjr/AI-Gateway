@@ -137,3 +137,33 @@ func (g *Gateway) Heal() []HealResult {
 
 // Heal pada Server dipakai pemeliharaan berkala (cmd/server).
 func (s *Server) Heal() []HealResult { return s.gw.Heal() }
+
+// ReviewEntry: satu pengetahuan menunggu tinjauan, dengan nama provider Custom AI-nya.
+type ReviewEntry struct {
+	Provider string `json:"provider"`
+	custom.ReviewItem
+}
+
+// Review menggabungkan antrean tinjauan semua Custom AI.
+func (g *Gateway) Review(limit int) []ReviewEntry {
+	var out []ReviewEntry
+	for _, p := range g.provs {
+		if cp, ok := p.impl.(*customProv); ok {
+			for _, r := range cp.e.Review(limit) {
+				out = append(out, ReviewEntry{Provider: p.cfg.Name, ReviewItem: r})
+			}
+		}
+	}
+	return out
+}
+
+// LearnStats: jumlah memori per tingkat kepercayaan.
+func (g *Gateway) LearnStats() map[string]map[string]int {
+	out := map[string]map[string]int{}
+	for _, p := range g.provs {
+		if cp, ok := p.impl.(*customProv); ok {
+			out[p.cfg.Name] = cp.e.Learner.LearnStats()
+		}
+	}
+	return out
+}

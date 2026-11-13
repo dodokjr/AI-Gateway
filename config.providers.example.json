@@ -1,0 +1,21 @@
+{
+    "_catatan": "Contoh provider tambahan. SALIN hanya entri yang Anda perlukan ke 'providers' di config.json (jangan seluruh file). Semua memakai format OpenAI-compatible. Nama model berubah-ubah: isi model asli dari dashboard penyedia, atau set env <NAMA>_MODEL (mis. TOGETHER_MODEL). Entri ini BELUM diuji ke layanan aslinya; URL diambil dari dokumentasi publik masing-masing penyedia, jadi cek ulang bila ada galat 404.",
+    "providers": [
+      { "name": "together",    "type": "openai_compat", "base_url": "https://api.together.xyz/v1",                          "model": "ISI_NAMA_MODEL", "keys_env": "TOGETHER_API_KEYS",    "priority": 20 },
+      { "name": "deepseek",    "type": "openai_compat", "base_url": "https://api.deepseek.com/v1",                          "model": "deepseek-chat",  "keys_env": "DEEPSEEK_API_KEYS",    "priority": 21 },
+      { "name": "xai",         "type": "openai_compat", "base_url": "https://api.x.ai/v1",                                  "model": "ISI_NAMA_MODEL", "keys_env": "XAI_API_KEYS",         "priority": 22 },
+      { "name": "perplexity",  "type": "openai_compat", "base_url": "https://api.perplexity.ai",                            "model": "sonar",          "keys_env": "PERPLEXITY_API_KEYS",  "priority": 23 },
+      { "name": "fireworks",   "type": "openai_compat", "base_url": "https://api.fireworks.ai/inference/v1",                "model": "ISI_NAMA_MODEL", "keys_env": "FIREWORKS_API_KEYS",   "priority": 24 },
+      { "name": "cerebras",    "type": "openai_compat", "base_url": "https://api.cerebras.ai/v1",                           "model": "ISI_NAMA_MODEL", "keys_env": "CEREBRAS_API_KEYS",    "priority": 25 },
+      { "name": "sambanova",   "type": "openai_compat", "base_url": "https://api.sambanova.ai/v1",                          "model": "ISI_NAMA_MODEL", "keys_env": "SAMBANOVA_API_KEYS",   "priority": 26 },
+      { "name": "nvidia",      "type": "openai_compat", "base_url": "https://integrate.api.nvidia.com/v1",                  "model": "ISI_NAMA_MODEL", "keys_env": "NVIDIA_API_KEYS",      "priority": 27 },
+      { "name": "huggingface", "type": "openai_compat", "base_url": "https://router.huggingface.co/v1",                     "model": "ISI_NAMA_MODEL", "keys_env": "HF_API_KEYS",          "priority": 28 },
+      { "name": "cohere",      "type": "openai_compat", "base_url": "https://api.cohere.ai/compatibility/v1",               "model": "ISI_NAMA_MODEL", "keys_env": "COHERE_API_KEYS",      "priority": 29 },
+      { "name": "moonshot",    "type": "openai_compat", "base_url": "https://api.moonshot.ai/v1",                           "model": "ISI_NAMA_MODEL", "keys_env": "MOONSHOT_API_KEYS",    "priority": 30 },
+      { "name": "qwen",        "type": "openai_compat", "base_url": "https://dashscope-intl.aliyuncs.com/compatible-mode/v1", "model": "ISI_NAMA_MODEL", "keys_env": "DASHSCOPE_API_KEYS",  "priority": 31 },
+      { "name": "githubmodels","type": "openai_compat", "base_url": "https://models.github.ai/inference",                   "model": "ISI_NAMA_MODEL", "keys_env": "GITHUB_MODELS_KEYS",   "priority": 32 },
+      { "name": "lmstudio",    "type": "openai_compat", "base_url": "http://localhost:1234/v1",                             "model": "ISI_NAMA_MODEL", "no_key": true, "disabled": true, "priority": 40 },
+      { "name": "llamacpp",    "type": "openai_compat", "base_url": "http://localhost:8081/v1",                             "model": "ISI_NAMA_MODEL", "no_key": true, "disabled": true, "priority": 41 },
+      { "name": "vllm",        "type": "openai_compat", "base_url": "http://localhost:8000/v1",                             "model": "ISI_NAMA_MODEL", "no_key": true, "disabled": true, "priority": 42 }
+    ]
+  }

@@ -140,6 +140,14 @@ Important limits:
 - Market forecasts are statistical projections from historical data, not financial advice.
 - On serverless, the learning memory needs Upstash to persist (same as the knowledge base).
 
+## Many AIs and the AI council
+
+Add any AI with an OpenAI-compatible API via `config.providers.example.json` (Together, DeepSeek, xAI, Perplexity, Fireworks, Cerebras, NVIDIA, Hugging Face, local models and more). `POST /v1/council` makes the Custom AI answer first, then other AIs answer too and review its answer. Guide, limits and risks (Indonesian): [docs/JEMBATAN_AI.md](docs/JEMBATAN_AI.md).
+
+## How the Custom AI learns
+
+Knowledge from other AIs has a trust ladder: `belum-diverifikasi` (unverified) -> `konsensus` (two different AIs agree) -> `terverifikasi` (you approve via `/v1/feedback`). Your own training (`/v1/train`) is authoritative and permanent. Review the queue with `GET /v1/learn/review`. **Every question and answer is also saved** to a training log (personal data and secrets masked; disable with `LOG_QA=0`; endpoints `/v1/training/log|export|replay`). Full guide (Indonesian), workflow and decision log: [docs/METODE_PEMBELAJARAN.md](docs/METODE_PEMBELAJARAN.md).
+
 ## Programming logic (Custom AI)
 
 ```bash

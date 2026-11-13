@@ -1,8 +1,3 @@
-// Package custom adalah mesin "Custom AI" lokal: memori belajar mandiri, pencarian web,
-// prediksi pasar kuantitatif, dan seni ASCII/biner. Ia BUKAN model bahasa generatif:
-// jawabannya berasal dari memori terlatih, knowledge base, hasil pencarian, dan rumus.
-// Bila keyakinannya rendah, ia mengembalikan *Declined sehingga gateway pindah ke AI lain,
-// lalu jawaban AI lain itu dipelajari kembali (knowledge transfer).
 package custom
 
 import (
@@ -105,14 +100,14 @@ func lastUser(msgs []Message) (q string, single bool) {
 }
 
 type memHit struct {
-	Answer, ID, Source string
-	Score              float64
+	Answer, ID, Source, Trust string
+	Score                     float64
 }
 
 func (e *Engine) bestMemory(q string) (best memHit) {
 	for _, m := range e.Learner.Search(q, 3) {
 		if m.Score > best.Score {
-			best = memHit{Answer: m.Item.Answer, ID: m.Item.ID, Source: "memory:" + m.Item.Source, Score: m.Score}
+			best = memHit{Answer: m.Item.Answer, ID: m.Item.ID, Source: "memory:" + m.Item.Source, Trust: m.Item.Trust(), Score: m.Score}
 		}
 	}
 	e.mu.RLock()
@@ -127,7 +122,7 @@ func (e *Engine) bestMemory(q string) (best memHit) {
 			}
 			for i, s := range QuestionScores(q, qs) {
 				if s > best.Score {
-					best = memHit{Answer: facts[i].Answer, ID: "kb:" + facts[i].ID, Source: "knowledge_base", Score: s}
+					best = memHit{Answer: facts[i].Answer, ID: "kb:" + facts[i].ID, Source: "knowledge_base", Trust: "pengguna", Score: s}
 				}
 			}
 		}
@@ -187,7 +182,7 @@ func (e *Engine) respond(ctx context.Context, msgs []Message) (*Reply, error) {
 		if h := e.bestMemory(q); h.Score > 0 {
 			conf = h.Score
 			if h.Score >= e.Cfg.Threshold {
-				return &Reply{Text: h.Answer, Meta: map[string]any{"source": h.Source, "confidence": round2(h.Score), "memory_id": h.ID}}, nil
+				return &Reply{Text: h.Answer, Meta: map[string]any{"source": h.Source, "confidence": round2(h.Score), "memory_id": h.ID, "trust": h.Trust}}, nil
 			}
 		}
 	} else if reason == "" {
@@ -342,3 +337,6 @@ func (e *Engine) Learn(q, a, source string) bool {
 }
 
 func (e *Engine) Feedback(id string, delta int) (bool, error) { return e.Learner.Feedback(id, delta) }
+
+// Review: antrean pengetahuan dari AI lain yang menunggu persetujuan manusia.
+func (e *Engine) Review(limit int) []ReviewItem { return e.Learner.Review(limit) }

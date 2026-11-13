@@ -78,3 +78,24 @@ func SanitizeUntrusted(s string) string {
 	}
 	return RedactSecrets(strings.Join(lines, "\n"))
 }
+
+var phoneLikeRe = regexp.MustCompile(`\+?\d[\d\s-]{9,}\d`)
+
+// RedactPII menyamarkan data pribadi yang jelas (email, nomor panjang >= 11 digit seperti telepon/KTP/kartu)
+// serta rahasia. Dipakai untuk log pelatihan; angka biasa (jam, tanggal, harga) dibiarkan.
+func RedactPII(s string) string {
+	s = RedactSecrets(s)
+	s = emailRe.ReplaceAllString(s, "[email]")
+	return phoneLikeRe.ReplaceAllStringFunc(s, func(m string) string {
+		digits := 0
+		for _, r := range m {
+			if r >= '0' && r <= '9' {
+				digits++
+			}
+		}
+		if digits >= 11 {
+			return "[nomor]"
+		}
+		return m
+	})
+}

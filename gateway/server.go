@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -100,6 +101,18 @@ func (s *Server) routes() http.Handler {
 	mux.HandleFunc("POST /v1/selfheal", func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, 200, map[string]any{"custom": s.gw.Heal()})
 	})
+	mux.HandleFunc("GET /v1/learn/review", func(w http.ResponseWriter, r *http.Request) {
+		limit := 20
+		if v, err := strconv.Atoi(r.URL.Query().Get("limit")); err == nil && v > 0 && v <= 200 {
+			limit = v
+		}
+		writeJSON(w, 200, map[string]any{"review": s.gw.Review(limit), "stats": s.gw.LearnStats()})
+	})
+	mux.HandleFunc("POST /v1/council", s.council)
+	mux.HandleFunc("GET /v1/training/log", s.trainLog)
+	mux.HandleFunc("GET /v1/training/export", s.trainExport)
+	mux.HandleFunc("POST /v1/training/replay", s.trainReplay)
+	mux.HandleFunc("DELETE /v1/training/log", s.trainClear)
 	mux.HandleFunc("POST /v1/train", s.train)
 	mux.HandleFunc("GET /v1/train", s.listTrain)
 	mux.HandleFunc("DELETE /v1/train/{id}", s.deleteTrain)
@@ -366,3 +379,102 @@ const indexHTML = `<!doctype html><html lang="id"><head><meta charset="utf-8"><m
 <body><h1>AI Gateway aktif</h1>
 <p>API chat teks gabungan Claude, GPT, Gemini dan lainnya dengan failover otomatis.</p>
 <p>Cek hidup: <code>GET /healthz</code><br>Chat: <code>POST /v1/chat</code> dengan header <code>Authorization: Bearer GATEWAY_KEY</code><br>Status: <code>GET /v1/status</code></p></body></html>`
+
+// council: Custom AI menjawab; AI lain ikut menjawab dan menilai jawaban Custom AI.
+func (s *Server) council(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		ChatRequest
+		Reviewers int      `json:"reviewers"`
+		Providers []string `json:"providers"`
+	}
+	if !decode(w, r, &req) {
+		return
+	}
+	if len(req.Messages) == 0 && strings.TrimSpace(req.Prompt) != "" {
+		req.Messages = []Message{{Role: "user", Content: req.Prompt}}
+	}
+	userSys, msgs, lastUser, err := splitMessages(req.Messages)
+	if err != nil {
+		writeErr(w, 400, err.Error())
+		return
+	}
+	var used []Example
+	if req.UseKnowledge == nil || *req.UseKnowledge {
+		used = s.kb.Search(lastUser, 3)
+	}
+	system := buildSystem(s.kb.Persona(), userSys, used)
+	ctx := r.Context()
+	if s.total > 0 {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, s.total)
+		defer cancel()
+	}
+	res, err := s.gw.Council(ctx, CouncilOptions{Reviewers: req.Reviewers, Only: req.Providers, Temperature: req.Temperature, MaxTokens: req.MaxTokens}, system, msgs)
+	if err != nil {
+		if errors.Is(err, context.DeadlineExceeded) {
+			writeErr(w, http.StatusGatewayTimeout, "batas waktu habis; kurangi jumlah peninjau atau naikkan timeout")
+			return
+		}
+		writeErr(w, http.StatusServiceUnavailable, err.Error())
+		return
+	}
+	writeJSON(w, 200, res)
+}
+
+func (s *Server) trainLog(w http.ResponseWriter, r *http.Request) {
+	limit := 50
+	if v, err := strconv.Atoi(r.URL.Query().Get("limit")); err == nil && v > 0 && v <= 500 {
+		limit = v
+	}
+	recs, total, kind, lastErr, err := s.gw.LogRecent(limit)
+	if err != nil {
+		writeErr(w, 500, err.Error())
+		return
+	}
+	writeJSON(w, 200, map[string]any{"count": total, "storage": kind, "last_write_error": lastErr, "records": recs})
+}
+
+func (s *Server) trainExport(w http.ResponseWriter, r *http.Request) {
+	limit := 1000
+	if v, err := strconv.Atoi(r.URL.Query().Get("limit")); err == nil && v > 0 && v <= 10000 {
+		limit = v
+	}
+	var providers []string
+	if p := r.URL.Query().Get("provider"); p != "" {
+		providers = strings.Split(p, ",")
+	}
+	b, n, err := s.gw.ExportJSONL(limit, providers, r.URL.Query().Get("exclude_custom") == "1")
+	if err != nil {
+		writeErr(w, 409, err.Error())
+		return
+	}
+	w.Header().Set("Content-Type", "application/x-ndjson; charset=utf-8")
+	w.Header().Set("X-Records", strconv.Itoa(n))
+	_, _ = w.Write(b)
+}
+
+func (s *Server) trainReplay(w http.ResponseWriter, r *http.Request) {
+	var b struct {
+		Limit int `json:"limit"`
+	}
+	if r.ContentLength != 0 && !decode(w, r, &b) {
+		return
+	}
+	if b.Limit <= 0 || b.Limit > 10000 {
+		b.Limit = 1000
+	}
+	res, err := s.gw.ReplayLog(b.Limit)
+	if err != nil {
+		writeErr(w, 409, err.Error())
+		return
+	}
+	writeJSON(w, 200, res)
+}
+
+func (s *Server) trainClear(w http.ResponseWriter, r *http.Request) {
+	if err := s.gw.ClearLog(); err != nil {
+		writeErr(w, 409, err.Error())
+		return
+	}
+	writeJSON(w, 200, map[string]bool{"cleared": true})
+}

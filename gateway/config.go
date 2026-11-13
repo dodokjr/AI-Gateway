@@ -61,6 +61,7 @@ func Build(cfg Config, total time.Duration) (*Server, error) {
 	}
 	kb := NewKB(StoreFromEnv(cfg.KBPath))
 	gw.AttachKnowledge(kb)
+	gw.SetTrainingLog(LogStoreFromEnv())
 	return NewServer(gw, kb, os.Getenv("GATEWAY_KEY"), total), nil
 }
 

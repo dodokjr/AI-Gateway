@@ -51,6 +51,9 @@ type Gateway struct {
 	mu      sync.Mutex
 	provs   []*provState
 	timeout time.Duration
+
+	tlog   LogStore // log pelatihan (nil = nonaktif)
+	logErr string   // galat penulisan log terakhir
 }
 
 type ChatOptions struct {
@@ -301,6 +304,7 @@ func (g *Gateway) Chat(ctx context.Context, o ChatOptions, system string, msgs [
 				if !isCustom {
 					g.learnFromPeer(msgs, rep.Text, p.cfg.Name)
 				}
+				g.logQA(msgs, rep.Text, p.cfg.Name, model, "chat", rep.Meta, "")
 				return &ChatResult{Text: rep.Text, Secondary: rep.Secondary, Meta: rep.Meta,
 					Provider: p.cfg.Name, Model: model, Failed: failed}, nil
 			}

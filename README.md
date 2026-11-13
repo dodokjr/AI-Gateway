@@ -43,6 +43,12 @@ Semua (kecuali `/healthz`) butuh header `Authorization: Bearer $GATEWAY_KEY`.
 | POST | `/v1/feedback` | Rating `1`/`-1` pada pengetahuan (`id`), atau simpan jawaban bagus |
 | GET/PUT | `/v1/persona` | Atur kepribadian/instruksi tetap |
 | GET | `/v1/status` | Status provider & key |
+| POST | `/v1/council` | Dewan AI: Custom AI menjawab, AI lain ikut menjawab dan menilai jawabannya |
+| GET | `/v1/training/log` | Log semua tanya-jawab (disamarkan), terbaru dulu |
+| GET | `/v1/training/export` | Ekspor log ke JSONL untuk melatih model lain |
+| POST | `/v1/training/replay` | Putar ulang log ke memori Custom AI (lewat penyaring + konsensus) |
+| DELETE | `/v1/training/log` | Hapus seluruh log |
+| GET | `/v1/learn/review` | Antrean tinjauan: pengetahuan dari AI lain yang menunggu persetujuan (+ statistik kepercayaan) |
 
 ### Contoh
 
@@ -147,6 +153,14 @@ Batasan penting:
 - **Cuaca** berasal dari Open-Meteo (Custom AI tidak menghitung cuaca sendiri); nama kota dikirim ke layanan itu. Akurasi menurun untuk hari yang jauh. Tanpa kota di pertanyaan dipakai `default_city` (bawaan Jakarta); kota yang disebut eksplisit dan tak ditemukan tidak diganti diam-diam. Matikan dengan `"weather": false`.
 - Prediksi pasar adalah proyeksi statistik dari data historis, bukan nasihat keuangan.
 - Pada serverless, memori belajar butuh Upstash agar bertahan (sama seperti knowledge base).
+
+## Banyak AI dan Dewan AI
+
+Tambah AI apa pun yang punya API OpenAI-compatible lewat `config.providers.example.json` (Together, DeepSeek, xAI, Perplexity, Fireworks, Cerebras, NVIDIA, Hugging Face, model lokal, dan lainnya). `POST /v1/council` membuat Custom AI menjawab lebih dulu, lalu AI lain ikut menjawab dan menilai jawabannya. Panduan, batas, dan risiko: [docs/JEMBATAN_AI.md](docs/JEMBATAN_AI.md).
+
+## Cara Custom AI belajar
+
+Pengetahuan dari AI lain punya jenjang kepercayaan: `belum-diverifikasi` -> `konsensus` (dua AI berbeda setuju) -> `terverifikasi` (Anda setujui lewat `/v1/feedback`). Pelatihan Anda (`/v1/train`) otoritatif dan permanen. Tinjau antrean lewat `GET /v1/learn/review`. **Semua tanya-jawab juga dicatat** ke log pelatihan (data pribadi/rahasia disamarkan; matikan dengan `LOG_QA=0`). Panduan lengkap, alur kerja, dan catatan keputusan: [docs/METODE_PEMBELAJARAN.md](docs/METODE_PEMBELAJARAN.md).
 
 ## Logika pemrograman (Custom AI)
 

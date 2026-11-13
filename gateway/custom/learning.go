@@ -28,6 +28,59 @@ type Item struct {
 	Score    int       `json:"score"`  // umpan balik pengguna
 	Created  time.Time `json:"created"`
 	Expires  time.Time `json:"expires,omitempty"` // nol = tidak kedaluwarsa
+
+	// Pembelajaran berjenjang kepercayaan (lihat docs/METODE_PEMBELAJARAN.md).
+	Verified  bool     `json:"verified,omitempty"`  // disetujui manusia (umpan balik +1) atau dilatih pengguna
+	Peers     []string `json:"peers,omitempty"`     // AI berbeda yang jawabannya SALING SETUJU (konsensus)
+	Conflicts int      `json:"conflicts,omitempty"` // berapa kali AI lain menjawab berbeda
+}
+
+// Trust: tingkat kepercayaan sebuah pengetahuan.
+func (it Item) Trust() string {
+	switch {
+	case it.Source == "user":
+		return "pengguna"
+	case it.Verified:
+		return "terverifikasi"
+	case len(it.Peers) >= 2:
+		return "konsensus"
+	}
+	return "belum-diverifikasi"
+}
+
+// answerSimilarity: kemiripan dua jawaban (Jaccard kata) 0..1.
+func answerSimilarity(a, b string) float64 {
+	sa, sb := map[string]bool{}, map[string]bool{}
+	for _, t := range Tokenize(a) {
+		sa[t] = true
+	}
+	for _, t := range Tokenize(b) {
+		sb[t] = true
+	}
+	if len(sa) == 0 || len(sb) == 0 {
+		return 0
+	}
+	inter := 0
+	for t := range sa {
+		if sb[t] {
+			inter++
+		}
+	}
+	return float64(inter) / float64(len(sa)+len(sb)-inter)
+}
+
+// AnswerSimilarity: kemiripan kata dua jawaban 0..1 (dipakai gateway untuk membandingkan jawaban antar-AI).
+func AnswerSimilarity(a, b string) float64 { return answerSimilarity(a, b) }
+
+const consensusSim = 0.5 // jawaban dianggap "setuju" bila kemiripan kata >= 0,5
+
+func addPeer(peers []string, p string) []string {
+	for _, x := range peers {
+		if x == p {
+			return peers
+		}
+	}
+	return append(peers, p)
 }
 
 type Match struct {
@@ -155,13 +208,42 @@ func (l *Learner) Learn(q, a, source string) (Item, bool, error) {
 	}
 	l.items = kept
 	for i := range l.items {
-		if normQ(l.items[i].Question) == normQ(q) {
-			if l.items[i].Source == "user" && source != "user" {
-				return l.items[i], false, nil
-			}
-			l.items[i].Answer, l.items[i].Source, l.items[i].Expires = a, source, exp
-			return l.items[i], true, l.saveLocked()
+		if normQ(l.items[i].Question) != normQ(q) {
+			continue
 		}
+		ex := &l.items[i]
+		isPeer := strings.HasPrefix(source, "peer")
+		switch {
+		case !isPeer: // pengguna melatih: otoritatif, menimpa, permanen
+			ex.Answer, ex.Source, ex.Expires = a, source, time.Time{}
+			ex.Verified, ex.Peers, ex.Conflicts = true, nil, 0
+		case ex.Source == "user":
+			return *ex, false, nil // jawaban pengguna tidak ditimpa AI lain
+		case ex.Verified: // sudah disetujui manusia: jangan ditimpa, hanya catat bila AI lain berbeda
+			if answerSimilarity(ex.Answer, a) < consensusSim {
+				ex.Conflicts++
+				return *ex, false, l.saveLocked()
+			}
+			return *ex, false, nil
+		case answerSimilarity(ex.Answer, a) >= consensusSim: // AI lain SETUJU -> konsensus (ensemble)
+			ex.Peers = addPeer(addPeer(ex.Peers, ex.Source), source)
+			if ex.Source == source {
+				ex.Answer = a
+			}
+			if l.ttl > 0 {
+				ex.Expires = now.Add(l.ttl)
+				if len(ex.Peers) >= 2 {
+					ex.Expires = now.Add(3 * l.ttl) // konsensus disimpan lebih lama (retensi adaptif)
+				}
+			}
+		default: // berbeda
+			ex.Conflicts++
+			if ex.Source != source {
+				return *ex, false, l.saveLocked() // jawaban lama dipertahankan, dicatat sebagai konflik
+			}
+			ex.Answer, ex.Peers, ex.Expires = a, []string{source}, exp // AI yang sama mengubah jawaban
+		}
+		return *ex, true, l.saveLocked()
 	}
 	if len(l.items) >= l.maxItems { // buang yang paling lama dan skornya terendah
 		sort.SliceStable(l.items, func(i, j int) bool {
@@ -172,7 +254,10 @@ func (l *Learner) Learn(q, a, source string) (Item, bool, error) {
 		})
 		l.items = l.items[:l.maxItems-1]
 	}
-	it := Item{ID: newID(), Question: q, Answer: a, Source: source, Created: now, Expires: exp}
+	it := Item{ID: newID(), Question: q, Answer: a, Source: source, Created: now, Expires: exp, Verified: !strings.HasPrefix(source, "peer")}
+	if strings.HasPrefix(source, "peer") {
+		it.Peers = []string{source}
+	}
 	l.items = append(l.items, it)
 	return it, true, l.saveLocked()
 }
@@ -226,7 +311,16 @@ func (l *Learner) Feedback(id string, delta int) (bool, error) {
 	}
 	for i := range l.items {
 		if l.items[i].ID == id {
-			l.items[i].Score += delta
+			it := &l.items[i]
+			it.Score += delta
+			if strings.HasPrefix(it.Source, "peer") {
+				switch {
+				case delta > 0: // disetujui manusia -> terverifikasi & permanen
+					it.Verified, it.Expires = true, time.Time{}
+				case delta < 0:
+					it.Verified = false
+				}
+			}
 			return true, l.saveLocked()
 		}
 	}
@@ -238,4 +332,69 @@ func (l *Learner) Count() int {
 	defer l.mu.Unlock()
 	_ = l.syncLocked()
 	return len(l.items)
+}
+
+// ReviewItem: pengetahuan dari AI lain yang menunggu persetujuan manusia (active learning).
+type ReviewItem struct {
+	ID        string    `json:"id"`
+	Question  string    `json:"question"`
+	Answer    string    `json:"answer"` // dipotong 300 karakter
+	Source    string    `json:"source"`
+	Trust     string    `json:"trust"`
+	Peers     []string  `json:"peers,omitempty"`
+	Conflicts int       `json:"conflicts"`
+	Created   time.Time `json:"created"`
+	Expires   time.Time `json:"expires,omitempty"`
+}
+
+// Review mengembalikan antrean tinjauan, yang PALING TIDAK PASTI lebih dulu (uncertainty sampling):
+// 1) ada konflik antar-AI, 2) hanya satu AI yang menjawab, 3) sudah konsensus. Lalu yang terlama.
+func (l *Learner) Review(limit int) []ReviewItem {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	_ = l.syncLocked()
+	now := time.Now()
+	var out []ReviewItem
+	rank := map[string]int{}
+	for _, it := range l.items {
+		if !strings.HasPrefix(it.Source, "peer") || it.Verified || it.Score <= -2 || (!it.Expires.IsZero() && now.After(it.Expires)) {
+			continue
+		}
+		a := []rune(it.Answer)
+		if len(a) > 300 {
+			a = append(a[:300], '…')
+		}
+		r := ReviewItem{ID: it.ID, Question: it.Question, Answer: string(a), Source: it.Source, Trust: it.Trust(), Peers: it.Peers, Conflicts: it.Conflicts, Created: it.Created, Expires: it.Expires}
+		switch {
+		case it.Conflicts > 0:
+			rank[it.ID] = 0
+		case len(it.Peers) < 2:
+			rank[it.ID] = 1
+		default:
+			rank[it.ID] = 2
+		}
+		out = append(out, r)
+	}
+	sort.SliceStable(out, func(i, j int) bool {
+		if rank[out[i].ID] != rank[out[j].ID] {
+			return rank[out[i].ID] < rank[out[j].ID]
+		}
+		return out[i].Created.Before(out[j].Created)
+	})
+	if limit > 0 && len(out) > limit {
+		out = out[:limit]
+	}
+	return out
+}
+
+// LearnStats: ringkasan tingkat kepercayaan memori.
+func (l *Learner) LearnStats() map[string]int {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	_ = l.syncLocked()
+	m := map[string]int{"pengguna": 0, "terverifikasi": 0, "konsensus": 0, "belum-diverifikasi": 0}
+	for _, it := range l.items {
+		m[it.Trust()]++
+	}
+	return m
 }
